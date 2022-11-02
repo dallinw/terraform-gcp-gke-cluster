@@ -1,0 +1,90 @@
+version: '2.1'
+
+orbs:
+  terraform: circleci/terraform@3.1.0
+  slack: circleci/slack@4.10.1
+
+jobs:
+  format:
+    docker:
+      - image: hashicorp/terraform
+    steps:
+      - checkout
+      - run: terraform fmt --recursive
+
+  validate:
+    docker:
+      - image: hashicorp/terraform
+    steps:
+      - checkout
+      - run: terraform init
+      - run: terraform validate
+
+  bump-tag:
+    docker:
+      - image: alpine/git
+    steps:
+      - add_ssh_keys:
+          fingerprints:
+            - "eb:f9:76:63:52:ef:27:5a:3d:ce:ab:81:40:a2:a8:4c"
+      - checkout
+      - run: |
+          git config user.email "automation@mydomain.com
+          git config user.name "CircleCI Automation"
+          VERSION=`git describe --tags --abbrev=0 | awk -F. '{OFS="."; $NF+=1; print $0}'`
+          git tag -a $VERSION -m $VERSION
+          git push --follow-tags
+
+  create-release:
+    docker:
+      - image: maniator/gh
+    steps:
+      - add_ssh_keys:
+          fingerprints:
+            - "eb:f9:76:63:52:ef:27:5a:3d:ce:ab:81:40:a2:a8:4c"
+      - checkout
+      - run: |
+          git config user.email "automation@mydomain.com
+          git config user.name "CircleCI Automation"
+          VERSION=`git describe --tags --abbrev=0`
+          gh release create $VERSION --generate-notes
+
+  notify:
+    docker:
+      - image: 'cimg/base:stable'
+    steps:
+      - slack/notify:
+          event: fail
+          channel: feed-devops-deployments
+          template: basic_fail_1
+      - slack/notify:
+          event: pass
+          channel: feed-devops-deployments
+          template: success_tagged_deploy_1
+
+workflows:
+  version: 2
+
+  Validate:
+    jobs:
+      - format
+      - validate
+
+  "Bump Tag":
+    jobs:
+      - bump-tag:
+          filters:
+            branches:
+              only:
+                - main
+
+  "Create Release":
+    jobs:
+      - create-release:
+          filters:
+            branches:
+              ignore: /.*/
+            tags:
+              only: /.*/
+      - notify:
+          context: Slack
